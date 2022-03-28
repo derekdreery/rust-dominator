@@ -1,5 +1,6 @@
-[![crates.io](https://img.shields.io/crates/v/dominator.svg)](https://crates.io/crates/dominator)
-[![docs.rs](https://docs.rs/dominator/badge.svg)](https://docs.rs/dominator)
+This is a fork of [`dominator`](https://github.com/pauan/rust-dominator), so I can merge some docs etc. that I find useful. Maybe in the future I'll get the changes merged upstream and make this crate redundant.
+
+~~~
 
 Zero-cost ultra-high-performance declarative DOM library using FRP signals for Rust!
 
