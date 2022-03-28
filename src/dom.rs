@@ -18,7 +18,7 @@ use crate::callbacks::Callbacks;
 use crate::traits::*;
 use crate::operations;
 use crate::operations::{for_each, spawn_future};
-use crate::utils::{EventListener, on, on_preventable, ValueDiscard, FnDiscard};
+use crate::utils::{EventListener, on, ValueDiscard, FnDiscard};
 
 
 pub struct RefFn<A, B, C> where B: ?Sized, C: Fn(&A) -> &B {
@@ -316,7 +316,6 @@ fn set_style<A, B>(style: &CssStyleDeclaration, name: &A, value: B, important: b
 
         bindings::set_style(style, name, value, important);
 
-        // TODO maybe use cfg(debug_assertions) ?
         let is_changed = bindings::get_style(style, name) != "";
 
         if is_changed {
@@ -339,8 +338,10 @@ fn set_style<A, B>(style: &CssStyleDeclaration, name: &A, value: B, important: b
     });
 
     if let None = okay {
-        // TODO maybe make this configurable
-        panic!("style is incorrect:\n  names: {}\n  values: {}", names.join(", "), values.join(", "));
+        if cfg!(debug_assertions) {
+            // TODO maybe make this configurable
+            panic!("style is incorrect:\n  names: {}\n  values: {}", names.join(", "), values.join(", "));
+        }
     }
 }
 
@@ -367,6 +368,33 @@ fn set_style_signal<A, B, C, D>(style: CssStyleDeclaration, callbacks: &mut Call
     });
 }
 
+// TODO should this inline ?
+fn set_style_unchecked_signal<A, B, C, D>(style: CssStyleDeclaration, callbacks: &mut Callbacks, name: A, value: D, important: bool)
+    where A: AsStr + 'static,
+          B: AsStr,
+          C: OptionStr<Output = B>,
+          D: Signal<Item = C> + 'static {
+
+    set_option(style, callbacks, value, move |style, value| {
+        match value {
+            Some(value) => {
+                name.with_str(|name| {
+                    let name: &str = intern(name);
+
+                    value.with_str(|value| {
+                        bindings::set_style(style, name, value, important);
+                    });
+                });
+            },
+            None => {
+                name.with_str(|name| {
+                    bindings::remove_style(style, intern(name));
+                });
+            },
+        }
+    });
+}
+
 // TODO check that the property *actually* was changed ?
 // TODO maybe use AsRef<Object> ?
 // TODO should this inline ?
@@ -377,6 +405,38 @@ fn set_property<A, B, C>(element: &A, name: &B, value: C) where A: AsRef<JsValue
     name.each(|name| {
         bindings::set_property(element, intern(name), &value);
     });
+}
+
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct EventOptions {
+    pub bubbles: bool,
+    pub preventable: bool,
+}
+
+impl EventOptions {
+    pub fn bubbles() -> Self {
+        Self {
+            bubbles: true,
+            preventable: false,
+        }
+    }
+
+    pub fn preventable() -> Self {
+        Self {
+            bubbles: false,
+            preventable: true,
+        }
+    }
+}
+
+impl Default for EventOptions {
+    fn default() -> Self {
+        Self {
+            bubbles: false,
+            preventable: false,
+        }
+    }
 }
 
 
@@ -417,35 +477,36 @@ impl<A> DomBuilder<A> {
     }
 
     #[inline]
-    fn _event<T, F>(&mut self, element: EventTarget, listener: F)
+    fn _event<T, F>(&mut self, element: EventTarget, options: &EventOptions, listener: F)
         where T: StaticEvent,
               F: FnMut(T) + 'static {
-        self.callbacks.after_remove(on(element, listener));
-    }
-
-    #[inline]
-    fn _event_preventable<T, F>(&mut self, element: EventTarget, listener: F)
-        where T: StaticEvent,
-              F: FnMut(T) + 'static {
-        self.callbacks.after_remove(on_preventable(element, listener));
+        self.callbacks.after_remove(on(element, options, listener));
     }
 
     // TODO add this to the StylesheetBuilder and ClassBuilder too
     #[inline]
-    pub fn global_event<T, F>(mut self, listener: F) -> Self
+    pub fn global_event_with_options<T, F>(mut self, options: &EventOptions, listener: F) -> Self
         where T: StaticEvent,
               F: FnMut(T) + 'static {
-        self._event(bindings::window_event_target(), listener);
+        self._event(bindings::window_event_target(), options, listener);
         self
     }
 
     // TODO add this to the StylesheetBuilder and ClassBuilder too
     #[inline]
-    pub fn global_event_preventable<T, F>(mut self, listener: F) -> Self
+    pub fn global_event<T, F>(self, listener: F) -> Self
         where T: StaticEvent,
               F: FnMut(T) + 'static {
-        self._event_preventable(bindings::window_event_target(), listener);
-        self
+        self.global_event_with_options(&EventOptions::default(), listener)
+    }
+
+    // TODO add this to the StylesheetBuilder and ClassBuilder too
+    #[deprecated(since = "0.5.21", note = "Use global_event_with_options instead")]
+    #[inline]
+    pub fn global_event_preventable<T, F>(self, listener: F) -> Self
+        where T: StaticEvent,
+              F: FnMut(T) + 'static {
+        self.global_event_with_options(&EventOptions::preventable(), listener)
     }
 
     #[inline]
@@ -457,7 +518,7 @@ impl<A> DomBuilder<A> {
 
     #[inline]
     pub fn apply<F>(self, f: F) -> Self where F: FnOnce(Self) -> Self {
-        self.apply_if(true, f)
+        f(self)
     }
 
     #[inline]
@@ -485,6 +546,7 @@ impl<A> DomBuilder<A> where A: Clone {
         f(self, element)
     }
 
+    #[deprecated(since = "0.5.20", note = "Use the with_node macro instead")]
     #[inline]
     pub fn before_inserted<F>(self, f: F) -> Self where F: FnOnce(A) {
         let element = self.element.clone();
@@ -569,21 +631,27 @@ impl<A> DomBuilder<A> where A: AsRef<JsValue> {
 
 impl<A> DomBuilder<A> where A: AsRef<EventTarget> {
     #[inline]
-    pub fn event<T, F>(mut self, listener: F) -> Self
+    pub fn event_with_options<T, F>(mut self, options: &EventOptions, listener: F) -> Self
         where T: StaticEvent,
               F: FnMut(T) + 'static {
         // TODO can this clone be avoided ?
-        self._event(self.element.as_ref().clone(), listener);
+        self._event(self.element.as_ref().clone(), options, listener);
         self
     }
 
     #[inline]
-    pub fn event_preventable<T, F>(mut self, listener: F) -> Self
+    pub fn event<T, F>(self, listener: F) -> Self
         where T: StaticEvent,
               F: FnMut(T) + 'static {
-        // TODO can this clone be avoided ?
-        self._event_preventable(self.element.as_ref().clone(), listener);
-        self
+        self.event_with_options(&EventOptions::default(), listener)
+    }
+
+    #[deprecated(since = "0.5.21", note = "Use event_with_options instead")]
+    #[inline]
+    pub fn event_preventable<T, F>(self, listener: F) -> Self
+        where T: StaticEvent,
+              F: FnMut(T) + 'static {
+        self.event_with_options(&EventOptions::preventable(), listener)
     }
 }
 
@@ -904,6 +972,18 @@ impl<A> DomBuilder<A> where A: AsRef<HtmlElement> {
         set_style(&self.element.as_ref().style(), &name, value, true);
         self
     }
+
+    #[inline]
+    pub fn style_unchecked<B, C>(self, name: B, value: C) -> Self
+        where B: AsStr,
+              C: AsStr {
+        name.with_str(|name| {
+            value.with_str(|value| {
+                bindings::set_style(&self.element.as_ref().style(), intern(name), value, false);
+            });
+        });
+        self
+    }
 }
 
 impl<A> DomBuilder<A> where A: AsRef<HtmlElement> {
@@ -926,6 +1006,17 @@ impl<A> DomBuilder<A> where A: AsRef<HtmlElement> {
               E: Signal<Item = D> + 'static {
 
         set_style_signal(self.element.as_ref().style(), &mut self.callbacks, name, value, true);
+        self
+    }
+
+    #[inline]
+    pub fn style_unchecked_signal<B, C, D, E>(mut self, name: B, value: E) -> Self
+        where B: AsStr + 'static,
+              C: AsStr,
+              D: OptionStr<Output = C>,
+              E: Signal<Item = D> + 'static {
+
+        set_style_unchecked_signal(self.element.as_ref().style(), &mut self.callbacks, name, value, false);
         self
     }
 
@@ -1050,6 +1141,18 @@ impl StylesheetBuilder {
     }
 
     #[inline]
+    pub fn style_unchecked<B, C>(self, name: B, value: C) -> Self
+        where B: AsStr,
+              C: AsStr {
+        name.with_str(|name| {
+            value.with_str(|value| {
+                bindings::set_style(&self.element, intern(name), value, false);
+            });
+        });
+        self
+    }
+
+    #[inline]
     pub fn style_signal<B, C, D, E>(mut self, name: B, value: E) -> Self
         where B: MultiStr + 'static,
               C: MultiStr,
@@ -1068,6 +1171,17 @@ impl StylesheetBuilder {
               E: Signal<Item = D> + 'static {
 
         set_style_signal(self.element.clone(), &mut self.callbacks, name, value, true);
+        self
+    }
+
+    #[inline]
+    pub fn style_unchecked_signal<B, C, D, E>(mut self, name: B, value: E) -> Self
+        where B: AsStr + 'static,
+              C: AsStr,
+              D: OptionStr<Output = C>,
+              E: Signal<Item = D> + 'static {
+
+        set_style_unchecked_signal(self.element.clone(), &mut self.callbacks, name, value, false);
         self
     }
 
@@ -1126,6 +1240,14 @@ impl ClassBuilder {
     }
 
     #[inline]
+    pub fn style_unchecked<B, C>(mut self, name: B, value: C) -> Self
+        where B: AsStr,
+              C: AsStr {
+        self.stylesheet = self.stylesheet.style_unchecked(name, value);
+        self
+    }
+
+    #[inline]
     pub fn style_signal<B, C, D, E>(mut self, name: B, value: E) -> Self
         where B: MultiStr + 'static,
               C: MultiStr,
@@ -1144,6 +1266,17 @@ impl ClassBuilder {
               E: Signal<Item = D> + 'static {
 
         self.stylesheet = self.stylesheet.style_important_signal(name, value);
+        self
+    }
+
+    #[inline]
+    pub fn style_unchecked_signal<B, C, D, E>(mut self, name: B, value: E) -> Self
+        where B: AsStr + 'static,
+              C: AsStr,
+              D: OptionStr<Output = C>,
+              E: Signal<Item = D> + 'static {
+
+        self.stylesheet = self.stylesheet.style_unchecked_signal(name, value);
         self
     }
 

@@ -57,6 +57,10 @@ macro_rules! make_event {
         impl $name {
             #[inline] pub fn prevent_default(&self) { self.event.prevent_default(); }
 
+            #[inline] pub fn stop_propagation(&self) { self.event.stop_propagation(); }
+
+            #[inline] pub fn stop_immediate_propagation(&self) { self.event.stop_immediate_propagation(); }
+
             #[inline] pub fn target(&self) -> Option<EventTarget> { self.event.target() }
 
             #[inline]
@@ -77,12 +81,21 @@ pub enum MouseButton {
 }
 
 macro_rules! make_mouse_event {
-    ($name:ident, $type:literal) => {
-        make_event!($name, $type => web_sys::MouseEvent);
+    ($name:ident, $type:literal => $event:path) => {
+        make_event!($name, $type => $event);
 
         impl $name {
             #[inline] pub fn x(&self) -> i32 { self.event.client_x() }
             #[inline] pub fn y(&self) -> i32 { self.event.client_y() }
+
+            #[inline] pub fn movement_x(&self) -> i32 { self.event.movement_x() }
+            #[inline] pub fn movement_y(&self) -> i32 { self.event.movement_y() }
+
+            #[inline] pub fn offset_x(&self) -> i32 { self.event.offset_x() }
+            #[inline] pub fn offset_y(&self) -> i32 { self.event.offset_y() }
+
+            #[inline] pub fn page_x(&self) -> i32 { self.event.page_x() }
+            #[inline] pub fn page_y(&self) -> i32 { self.event.page_y() }
 
             #[inline] pub fn screen_x(&self) -> i32 { self.event.screen_x() }
             #[inline] pub fn screen_y(&self) -> i32 { self.event.screen_y() }
@@ -120,6 +133,7 @@ macro_rules! make_keyboard_event {
             #[inline] pub fn ctrl_key(&self) -> bool { self.event.ctrl_key() || self.event.meta_key() }
             #[inline] pub fn shift_key(&self) -> bool { self.event.shift_key() }
             #[inline] pub fn alt_key(&self) -> bool { self.event.alt_key() }
+            #[inline] pub fn repeat(&self) -> bool { self.event.repeat() }
         }
     };
 }
@@ -132,7 +146,7 @@ macro_rules! make_focus_event {
 
 macro_rules! make_drag_event {
     ($name:ident, $type:literal) => {
-        make_event!($name, $type => web_sys::DragEvent);
+        make_mouse_event!($name, $type => web_sys::DragEvent);
 
         impl $name {
             #[inline] pub fn data_transfer(&self) -> Option<web_sys::DataTransfer> { self.event.data_transfer() }
@@ -151,14 +165,14 @@ macro_rules! make_input_event {
 }
 
 
-make_mouse_event!(Click, "click");
-make_mouse_event!(MouseDown, "mousedown");
-make_mouse_event!(MouseUp, "mouseup");
-make_mouse_event!(MouseMove, "mousemove");
-make_mouse_event!(MouseEnter, "mouseenter");
-make_mouse_event!(MouseLeave, "mouseleave");
-make_mouse_event!(DoubleClick, "dblclick");
-make_mouse_event!(ContextMenu, "contextmenu");
+make_mouse_event!(Click, "click" => web_sys::MouseEvent);
+make_mouse_event!(MouseDown, "mousedown" => web_sys::MouseEvent);
+make_mouse_event!(MouseUp, "mouseup" => web_sys::MouseEvent);
+make_mouse_event!(MouseMove, "mousemove" => web_sys::MouseEvent);
+make_mouse_event!(MouseEnter, "mouseenter" => web_sys::MouseEvent);
+make_mouse_event!(MouseLeave, "mouseleave" => web_sys::MouseEvent);
+make_mouse_event!(DoubleClick, "dblclick" => web_sys::MouseEvent);
+make_mouse_event!(ContextMenu, "contextmenu" => web_sys::MouseEvent);
 
 make_keyboard_event!(KeyDown, "keydown");
 make_keyboard_event!(KeyUp, "keyup");

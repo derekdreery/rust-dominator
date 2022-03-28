@@ -5,7 +5,7 @@ use once_cell::sync::Lazy;
 use futures_signals::signal::{Mutable, ReadOnlyMutable};
 
 use crate::bindings;
-use crate::dom::{Dom, DomBuilder};
+use crate::dom::{Dom, DomBuilder, EventOptions};
 use crate::utils::EventListener;
 use crate::events;
 
@@ -34,7 +34,7 @@ impl CurrentUrl {
         let value = Mutable::new(String::from(bindings::current_url()));
 
         // TODO clean this up somehow ?
-        let _ = EventListener::new(bindings::window_event_target(), "popstate", {
+        let _ = EventListener::new(bindings::window_event_target(), "popstate", &EventOptions::default(), {
             let value = value.clone();
             move |_| {
                 change_url(&value);
@@ -76,7 +76,7 @@ pub fn on_click_go_to_url<A, B>(new_url: A) -> impl FnOnce(DomBuilder<B>) -> Dom
 
     #[inline]
     move |dom| {
-        dom.event_preventable(move |e: events::Click| {
+        dom.event_with_options(&EventOptions::preventable(), move |e: events::Click| {
             e.prevent_default();
             go_to_url(&new_url);
         })
@@ -108,7 +108,7 @@ macro_rules! on_click_go_to_url {
     ($this:ident, $url:expr) => {{
         let url = $url;
 
-        $this.event_preventable(move |e: $crate::events::Click| {
+        $this.event_with_options(&$crate::EventOptions::preventable(), move |e: $crate::events::Click| {
             e.prevent_default();
             $crate::routing::go_to_url(&url);
         })
