@@ -135,6 +135,20 @@ where
     }
 }
 
+impl<S: AsStr> AsStr for std::sync::Arc<S> {
+    fn as_str(&self) -> &str {
+        #[allow(deprecated)]
+        (&**self).as_str()
+    }
+
+    fn with_str<A, F>(&self, f: F) -> A
+    where
+        F: FnOnce(&str) -> A,
+    {
+        (&**self).with_str(f)
+    }
+}
+
 pub trait MultiStr {
     fn find_map<A, F>(&self, f: F) -> Option<A>
     where
